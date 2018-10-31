@@ -1,0 +1,162 @@
+---
+title: "Analytic of Adverse Health and Economic Impact"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## 1: Synopsis
+The goal of this project is to explore the NOAA Storm Database and explore the effects of severe weather events on both population and economy.The database covers the time period between 1950 and November 2011.
+
+The following analysis investigates which types of severe weather events are most harmful on:
+
+1. Health - injuries and fatalities
+2. Property and crops cost - economic consequences
+
+##2 Data Processing
+###2.1. Load Data
+Download the raw data file and read the data then convert to the data.frame
+
+```{r}
+library(data.table)
+library(R.utils)
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(url, destfile = paste0("C:/Users/Abee/Desktop/Nia/Open Course/JH/reproducible", '/repdata%2Fdata%2FStormData.csv.bz2'))
+stormDf <- fread("C:/Users/Abee/Desktop/Nia/Open Course/JH/reproducible/repdata%2Fdata%2FStormData.csv.bz2")
+
+stormDf <- as.data.frame(stormDf)
+```
+
+###2.2. Data Subsetting
+Subset the dataset based on the parameter of interest, by inspecting the column names first.
+```{r}
+#inspect column names
+colnames(stormDf)
+
+#Subset the data based on enviroment type, injuries, fatalities, property damage, property damage exponent, crop damage, crop damage exponent (look at documentation). 
+library(tidyverse)
+stormDF <- stormDf %>%
+  select("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP",
+         "CROPDMG", "CROPDMGEXP") %>% drop_na(.)
+```
+
+###2.3. Exponent Columns into Actual Exponents instead of (-,+, H, K, "m", 0-9)
+Convert these exponent to numerical value so they can be used for calculating the cost. i.e. these value use as the multiplication cost factor of the damage 
+```{r}
+table(stormDF$PROPDMGEXP)
+table(stormDF$CROPDMGEXP)
+
+#Here we assume m and M are equal, which also apply to B and K as well.
+library(data.table)
+library(tidyverse)
+stormDF <- as.data.table(stormDF)
+#convert all letter to lowercase for consistency
+c <- c("PROPDMGEXP", "CROPDMGEXP")
+stormDF[,  (c) := c(lapply(.SD, tolower)), .SDcols = c]
+# Map the exponents to numeric values.
+propDmg <-  c("\"\"" = 10^0,
+                 "-" = 10^0, 
+                 "+" = 10^0,
+                 "0" = 10^0,
+                 "1" = 10^1,
+                 "2" = 10^2,
+                 "3" = 10^3,
+                 "4" = 10^4,
+                 "5" = 10^5,
+                 "6" = 10^6,
+                 "7" = 10^7,
+                 "8" = 10^8,
+                 "9" = 10^9,
+                 "h" = 10^2,
+                 "k" = 10^3,
+                 "m" = 10^6,
+                 "b" = 10^9)
+
+cropDmg <-  c("\"\"" = 10^0,
+                "?" = 10^0, 
+                "0" = 10^0,
+                "k" = 10^3,
+                "m" = 10^6,
+                "b" = 10^9)
+
+stormDF[, PROPDMGEXP := propDmg[as.character(stormDF[,PROPDMGEXP])]]
+stormDF[, CROPDMGEXP := cropDmg[as.character(stormDF[,CROPDMGEXP])]]
+stormDF[is.na(PROPDMGEXP), PROPDMGEXP := 10^0 ]
+stormDF[is.na(CROPDMGEXP), CROPDMGEXP := 10^0 ]
+head(stormDF)
+```
+
+
+### 2.4. Calculate total Fatalities and Injuries
+```{r}
+ttlInjuryCost <- stormDF [, .(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES), totals = sum(FATALITIES) + sum(INJURIES)), by = .(EVTYPE)]
+ttlInjuryCost <- ttlInjuryCost %>% arrange(desc(FATALITIES))
+
+head(ttlInjuryCost)
+```
+
+
+### 2.5. Calculating Total Property and Crop Cost for Economic
+```{r}
+stormDF <- stormDF[, .(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, propCost = PROPDMG * PROPDMGEXP, CROPDMG, CROPDMGEXP, cropCost = CROPDMG * CROPDMGEXP)]
+
+
+ttlEcoCost <- stormDF[, .(propCost = sum(propCost), cropCost= sum(cropCost), total = sum(propCost) + sum(cropCost)), by = .(EVTYPE)]
+ttlEcoCost <- ttlEcoCost %>% arrange(desc(total))
+
+head(ttlEcoCost)
+
+```
+
+
+##3. Result
+
+###3.1. Events that are most harmful to population health based on fatalities and injuries factor
+```{r}
+library(ggrepel)
+topIF <- ttlInjuryCost[1:15,]
+
+#here we do some re-structuring of the data
+top15 <- gather(topIF, "type", "value",  2:3)
+
+head(top15)
+
+top15 %>%
+  ggplot(aes(x = reorder(EVTYPE, -value), y =value, label=value))+
+  
+  geom_bar(stat="identity", aes(fill=type), position = position_stack(reverse = TRUE))+
+  
+ geom_text_repel()+
+  
+  coord_flip()+
+  ylab("Frequency")+xlab("Event")+
+  theme(axis.text.x = element_text(angle=45, hjust=1))+
+  ggtitle("Top 15 US Killer Events") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+###3.2. Events that cause Greatest Economic Consequences
+
+```{r}
+#here we do some re-structuring of the data
+topDmg <- ttlEcoCost[1:15,]
+top15E <- gather(topDmg, "type", "value",  2:3)
+
+head(top15E)
+
+top15E %>%
+    ggplot(aes(x = reorder(EVTYPE, -value), y =value) )+
+  
+  geom_bar(stat="identity", aes(fill=type))+
+
+  ylab("Frequency")+xlab("Event")+
+  theme(axis.text.x = element_text(angle=45, hjust=1))+ 
+  ggtitle("Top 15 US Greatest Economic Consequences by Storm Event") + theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
